@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "linmod"
+version = "0.1.0"
+description = "Transparent and modular linear modeling in NumPy with diagnostics and regularization."
+authors = ["Diogo Ribeiro <diogo_dj@hotmail.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/DiogoRibeiro7/linmod"
+repository = "https://github.com/DiogoRibeiro7/linmod"
+keywords = ["linear regression", "statistics", "numpy", "ridge", "lasso", "diagnostics"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Mathematics"
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+numpy = "*"
+matplotlib = "*"
+scikit-learn = "*"
+streamlit = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+jupyterlab = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
