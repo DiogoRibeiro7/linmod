@@ -4,6 +4,7 @@ import numpy as np
 from scipy import stats
 from typing import Any, Union
 
+from linmod.base import BaseLinearModel
 from linmod.stats.wls import WeightedLinearModel
 from linmod.stats.gls import GeneralizedLinearModel
 from linmod.regularization.ridge import RidgeLinearModel
@@ -12,24 +13,21 @@ from linmod.regularization.elasticnet import ElasticNetLinearModel
 from linmod.evaluation.crossval import cross_val_score
 
 
-class LinearModel:
+class LinearModel(BaseLinearModel):
     def __init__(self) -> None:
-        self.coefficients: np.ndarray | None = None
+        super().__init__()
         self.std_errors: np.ndarray | None = None
         self.robust_std_errors: np.ndarray | None = None
         self.t_values: np.ndarray | None = None
         self.p_values: np.ndarray | None = None
         self.confidence_intervals: np.ndarray | None = None
         self.anova_table: dict[str, Any] | None = None
-        self.fitted_values: np.ndarray | None = None
-        self.residuals: np.ndarray | None = None
         self.df_residual: int | None = None
         self.residual_std_error: float | None = None
         self.r_squared: float | None = None
         self.adj_r_squared: float | None = None
         self.f_statistic: float | None = None
         self.f_p_value: float | None = None
-        self.X_design_: np.ndarray | None = None  # for internal diagnostics
 
     def fit(self, X: np.ndarray, y: np.ndarray, alpha: float = 0.05) -> None:
         """
@@ -279,7 +277,11 @@ class LinearModel:
             "goldfeld_quandt": self.goldfeld_quandt_test(sort_by=gq_sort_by, alpha=alpha),
             "park": self.park_test(predictor_index=park_index, alpha=alpha),
             "glejser": self.glejser_test(predictor_index=glejser_index, transform=glejser_transform, alpha=alpha),
-
+            "reset": self.reset_test(alpha=alpha),
+            "variance_power": self.variance_power_test(alpha=alpha),
+            "box_cox": self.box_cox_suggestion(),
+            "harvey_collier": self.harvey_collier_test(alpha=alpha),
+            "white_nonlinearity": self.white_nonlinearity_test(alpha=alpha)
         }
 
     def goldfeld_quandt_test(self, sort_by: int = 1, drop_fraction: float = 0.2, alpha: float = 0.05) -> dict[str, Union[float, np.float64, np.ndarray, str]]:
@@ -561,6 +563,443 @@ class LinearModel:
         )
 
         return table
+    
+    def reset_test(self, max_power: int = 3, alpha: float = 0.05) -> dict[str, float | str]:
+        """
+        RESET test for functional form misspecification.
+
+        Parameters
+        ----------
+        max_power : int
+            Highest power of fitted values to include (e.g., 2 means include ŷ²).
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        dict with F statistic, df, p-value, and interpretation.
+        """
+        if self.fitted_values is None or self.X_design_ is None or self.residuals is None:
+            raise ValueError("Model must be fit before running RESET test.")
+
+        n = len(self.fitted_values)
+        base_X = self.X_design_
+        powers = [self.fitted_values ** p for p in range(2, max_power + 1)]
+        augmented_X = np.column_stack([base_X] + powers)
+
+        beta_aug = np.linalg.lstsq(augmented_X, self.fitted_values + self.residuals, rcond=None)[0]
+        y_aug_hat = augmented_X @ beta_aug
+        residuals_aug = self.fitted_values + self.residuals - y_aug_hat
+
+        rss_base = np.sum(self.residuals ** 2)
+        rss_aug = np.sum(residuals_aug ** 2)
+
+        df1 = max_power - 1
+        df2 = n - augmented_X.shape[1]
+        f_stat = ((rss_base - rss_aug) / df1) / (rss_aug / df2)
+        p = 1 - stats.f.cdf(f_stat, df1, df2)
+
+        interpretation = (
+            "Possible functional form misspecification"
+            if p < alpha
+            else "No strong evidence of misspecification"
+        )
+
+        return {
+            "F statistic": f_stat,
+            "df1": df1,
+            "df2": df2,
+            "p-value": p,
+            "interpretation": interpretation
+        }
+
+
+    def variance_power_test(self, predictor_index: int = 0, alpha: float = 0.05) -> dict[str, float | str]:
+        """
+        Estimate power model: Var(u²) = x^gamma
+
+        Parameters
+        ----------
+        predictor_index : int
+            Index of predictor to test.
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        dict with gamma estimate, t-statistic, p-value, and interpretation.
+        """
+        if self.X_design_ is None or self.residuals is None:
+            raise ValueError("Model must be fit before variance power test.")
+
+        x = self.X_design_[:, predictor_index + 1]
+        u2 = self.residuals**2
+
+        x_pos = np.where(x > 0, x, 1e-8)
+        log_u2 = np.log(u2 + 1e-8)
+        log_x = np.log(x_pos)
+
+        x_mean = np.mean(log_x)
+        y_mean = np.mean(log_u2)
+
+        slope = np.sum((log_x - x_mean) * (log_u2 - y_mean)) / np.sum((log_x - x_mean)**2)
+        intercept = y_mean - slope * x_mean
+
+        y_pred = intercept + slope * log_x
+        residuals = log_u2 - y_pred
+        sse = np.sum(residuals ** 2)
+        se_slope = np.sqrt(sse / (len(x) - 2) / np.sum((log_x - x_mean) ** 2))
+
+        t_stat = slope / se_slope
+        p = 2 * (1 - stats.t.cdf(abs(t_stat), df=len(x) - 2))
+
+        interpretation = (
+            "Variance appears to follow a power function of the predictor"
+            if p < alpha
+            else "No strong power-form variance relationship"
+        )
+
+        return {
+            "gamma (slope)": slope,
+            "t statistic": t_stat,
+            "p-value": p,
+            "interpretation": interpretation
+        }
+        
+    def box_cox_suggestion(self, lambdas: list[float] = [-1, -0.5, 0, 0.5, 1]) -> dict[str, float | str]:
+        """
+        Approximate Box–Cox transformation recommendation by minimizing residual variance.
+
+        Parameters
+        ----------
+        lambdas : list of float
+            Power transformation candidates (0 means log).
+
+        Returns
+        -------
+        dict with best lambda, residual variance, and recommendation.
+        """
+        if self.X_design_ is None or self.fitted_values is None or self.residuals is None:
+            raise ValueError("Model must be fit before Box–Cox suggestion.")
+
+        y = self.fitted_values + self.residuals
+        best_lambda = None
+        best_rss = float("inf")
+
+        for lmb in lambdas:
+            if lmb == 0:
+                y_trans = np.log(y + 1e-8)
+            else:
+                y_trans = (y ** lmb - 1) / lmb
+
+            beta = np.linalg.lstsq(self.X_design_, y_trans, rcond=None)[0]
+            y_hat = self.X_design_ @ beta
+            rss = np.sum((y_trans - y_hat) ** 2)
+
+            if rss < best_rss:
+                best_rss = rss
+                best_lambda = lmb
+
+        interpretation = f"Suggest Box–Cox transform with lambda = {best_lambda}"
+
+        return {
+            "lambda": best_lambda,
+            "RSS": best_rss,
+            "interpretation": interpretation
+        }
+        
+    def harvey_collier_test(self, alpha: float = 0.05) -> dict[str, float | str]:
+        """
+        Harvey–Collier test for linear functional form misspecification.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        dict with t statistic, p-value, and interpretation.
+        """
+        if self.fitted_values is None or self.residuals is None:
+            raise ValueError("Model must be fit before Harvey–Collier test.")
+
+        y = self.fitted_values + self.residuals
+        y_hat = self.fitted_values
+
+        Z = np.column_stack([np.ones(len(y_hat)), y_hat])
+        beta = np.linalg.lstsq(Z, y, rcond=None)[0]
+        y_pred = Z @ beta
+        residuals = y - y_pred
+
+        sse = np.sum(residuals ** 2)
+        mse = sse / (len(y) - 2)
+        var_beta = mse * np.linalg.inv(Z.T @ Z)
+        t_stat = beta[1] / np.sqrt(var_beta[1, 1])
+
+        p_value = 2 * (1 - stats.t.cdf(np.abs(t_stat), df=len(y) - 2))
+
+        interpretation = (
+            "Possible linear functional form misspecification"
+            if p_value < alpha
+            else "No evidence of linear form misfit"
+        )
+
+        return {
+            "t statistic": t_stat,
+            "p-value": p_value,
+            "interpretation": interpretation
+        }
+        
+    def white_nonlinearity_test(self, alpha: float = 0.05) -> dict[str, float | str]:
+        """
+        White’s expansion test for nonlinear functional form misspecification.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        dict with F statistic, df, p-value, and interpretation.
+        """
+        if self.X_design_ is None or self.fitted_values is None or self.residuals is None:
+            raise ValueError("Model must be fit before test.")
+
+        X = self.X_design_[:, 1:]  # exclude intercept
+        y = self.fitted_values + self.residuals
+        n, k = X.shape
+
+        nonlinear_terms = []
+        for i in range(k):
+            nonlinear_terms.append(X[:, i] ** 2)
+            for j in range(i + 1, k):
+                nonlinear_terms.append(X[:, i] * X[:, j])
+
+        X_aug = np.column_stack([self.X_design_] + nonlinear_terms)
+        df1 = X_aug.shape[1] - self.X_design_.shape[1]
+        df2 = n - X_aug.shape[1]
+
+        beta_full = np.linalg.lstsq(X_aug, y, rcond=None)[0]
+        rss_full = np.sum((y - X_aug @ beta_full) ** 2)
+        rss_base = np.sum(self.residuals ** 2)
+
+        f_stat = ((rss_base - rss_full) / df1) / (rss_full / df2)
+        p_value = 1 - stats.f.cdf(f_stat, df1, df2)
+
+        interpretation = (
+            "Model may be missing nonlinear structure"
+            if p_value < alpha
+            else "No evidence of nonlinear functional form"
+        )
+
+        return {
+            "F statistic": f_stat,
+            "df1": df1,
+            "df2": df2,
+            "p-value": p_value,
+            "interpretation": interpretation
+        }
+
+    def recommend_transformations(self, alpha: float = 0.05) -> dict[str, list[str]]:
+        """
+        Recommend response and/or predictor transformations based on diagnostic tests.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level used for interpretation.
+
+        Returns
+        -------
+        dict with recommendations for 'response' and 'predictors'.
+        """
+        if self.residuals is None or self.X_design_ is None:
+            raise ValueError("Model must be fit before making transformation suggestions.")
+
+        diag = self.diagnostics(alpha=alpha)
+        response_recommendations = []
+        predictor_recommendations = []
+
+        # Box-Cox transformation for y
+        boxcox = diag["box_cox"]
+        lmb = boxcox["lambda"]
+        if lmb < -0.5:
+            response_recommendations.append("1/y (inverse)")
+        elif -0.5 <= lmb < 0.3:
+            response_recommendations.append("log(y)")
+        elif 0.3 <= lmb < 0.8:
+            response_recommendations.append("sqrt(y)")
+        elif lmb > 1.2:
+            response_recommendations.append("y^2")
+        elif abs(lmb - 1.0) > 0.1:
+            response_recommendations.append(f"Box–Cox: y^{lmb:.2f}")
+
+        # RESET / Harvey–Collier / White-nonlinearity → suggest polynomials or interactions
+        if diag["reset"]["p-value"] < alpha or diag["harvey_collier"]["p-value"] < alpha:
+            predictor_recommendations.append("Include polynomial terms (e.g., x², x³)")
+
+        if diag["white_nonlinearity"]["p-value"] < alpha:
+            predictor_recommendations.append("Include interaction terms (e.g., x₁ * x₂)")
+
+        # Park / Glejser / Variance power
+        if diag["park"]["p-value"] < alpha:
+            predictor_recommendations.append("Apply log(x) or sqrt(x) to stabilize variance")
+
+        if diag["glejser"]["p-value"] < alpha:
+            predictor_recommendations.append(f"Try transformation: {diag['glejser']['transformation']}(x)")
+
+        if diag["variance_power"]["p-value"] < alpha:
+            gamma = diag["variance_power"]["gamma (slope)"]
+            if gamma < -0.5:
+                predictor_recommendations.append("Apply inverse(x)")
+            elif gamma < 0.5:
+                predictor_recommendations.append("Apply log(x) or sqrt(x)")
+            elif gamma > 1.5:
+                predictor_recommendations.append("Consider x² or polynomial variance modeling")
+
+        return {
+            "response": list(set(response_recommendations)),
+            "predictors": list(set(predictor_recommendations))
+        }
+
+    def suggest_transformed_model(self, alpha: float = 0.05) -> dict[str, Any]:
+        """
+        Suggest and build a transformed model based on diagnostics.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance threshold for transformation suggestions.
+
+        Returns
+        -------
+        dict containing:
+            - y_trans: transformed response vector
+            - X_trans: transformed predictor matrix (with intercept)
+            - description: list of applied transformations
+        """
+        diag = self.diagnostics(alpha=alpha)
+        X = self.X_design_[:, 1:]  # predictors only
+        y = self.fitted_values + self.residuals
+        n, p = X.shape
+
+        transforms = {"description": [], "X_trans": [], "y_trans": y.copy()}
+
+        # Transform y
+        boxcox = diag["box_cox"]
+        lmb = boxcox["lambda"]
+        if abs(lmb - 1.0) > 0.1:
+            if lmb == 0:
+                y_t = np.log(y + 1e-8)
+                transforms["description"].append("log(y)")
+            else:
+                y_t = (y ** lmb - 1) / lmb
+                transforms["description"].append(f"Box–Cox transform on y (λ={lmb:.2f})")
+            transforms["y_trans"] = y_t
+
+        # Start with original predictors
+        X_parts = [np.ones((n, 1))]  # intercept
+        X_parts.append(X)
+        desc = [f"x{i+1}" for i in range(p)]
+
+        # Add polynomial terms
+        if diag["reset"]["p-value"] < alpha or diag["harvey_collier"]["p-value"] < alpha:
+            for i in range(p):
+                X_parts.append(X[:, i] ** 2)
+                desc.append(f"x{i+1}^2")
+            transforms["description"].append("Added squared terms (x^2)")
+
+        # Add interactions
+        if diag["white_nonlinearity"]["p-value"] < alpha:
+            for i in range(p):
+                for j in range(i + 1, p):
+                    X_parts.append(X[:, i] * X[:, j])
+                    desc.append(f"x{i+1}*x{j+1}")
+            transforms["description"].append("Added interaction terms (x_i * x_j)")
+
+        # Log, sqrt, inverse transforms on predictors
+        if diag["park"]["p-value"] < alpha or diag["glejser"]["p-value"] < alpha:
+            for i in range(p):
+                xi = X[:, i]
+                X_parts.append(np.log(np.abs(xi) + 1e-8))
+                desc.append(f"log(x{i+1})")
+                X_parts.append(np.sqrt(np.abs(xi)))
+                desc.append(f"sqrt(x{i+1})")
+                X_parts.append(1 / (np.abs(xi) + 1e-8))
+                desc.append(f"1/x{i+1}")
+            transforms["description"].append("Log, sqrt, and inverse transforms of predictors")
+
+        # Final design matrix
+        X_new = np.column_stack(X_parts)
+        transforms["X_trans"] = X_new
+        transforms["features"] = desc
+
+        return transforms
+    
+    def transformation_recommendations_to_latex(self, alpha: float = 0.05) -> str:
+        """
+        Generate LaTeX table with recommended transformations.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        str
+            LaTeX tabular string.
+        """
+        recs = self.recommend_transformations(alpha=alpha)
+        lines = []
+
+        for r in recs["response"]:
+            lines.append(f"Response & {r} \\\\")
+
+        for p in recs["predictors"]:
+            lines.append(f"Predictors & {p} \\\\")
+
+        table = (
+            "\\begin{tabular}{ll}\n"
+            "\\toprule\n"
+            "Target & Recommended Transformation \\\\\n"
+            "\\midrule\n"
+            + "\n".join(lines) +
+            "\n\\bottomrule\n\\end{tabular}"
+        )
+
+        return table
+    
+    def fit_transformed(self, alpha: float = 0.05) -> "LinearModel":
+        """
+        Automatically transform response and predictors based on diagnostics and fit a new model.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level used for transformation decisions.
+
+        Returns
+        -------
+        LinearModel
+            A new model trained on transformed data.
+        """
+        suggestion = self.suggest_transformed_model(alpha=alpha)
+        X_trans = suggestion["X_trans"]
+        y_trans = suggestion["y_trans"]
+
+        model = LinearModel()
+        model.fit(X_trans[:, 1:], y_trans)  # exclude intercept
+
+        # Store extra info for interpretation
+        model._transformation_steps = suggestion["description"]
+        model._transformed_features = suggestion["features"]
+
+        return model
+
+
 
 
 
