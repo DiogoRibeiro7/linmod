@@ -1,3 +1,4 @@
+# linmod - Linear Modeling and Inference in Python: A NumPy-Based Framework for Classical and Regularized Regression
 ```text
 linmod/
 ├── __init__.py
