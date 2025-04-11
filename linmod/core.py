@@ -2,7 +2,7 @@ import math
 from scipy.stats import shapiro
 import numpy as np
 from scipy import stats
-from typing import Any
+from typing import Any, Union
 
 from linmod.stats.wls import WeightedLinearModel
 from linmod.stats.gls import GeneralizedLinearModel
@@ -216,8 +216,8 @@ class LinearModel:
 
         Z = [np.ones(n)]
         Z.extend(X_design.T)
-        Z.extend((X_design[:, i] * X_design[:, j]
-                 for i in range(k) for j in range(i, k)))
+        Z.extend(list(X_design[:, i] * X_design[:, j]
+                      for i in range(k) for j in range(i, k)))
         Z = np.column_stack(Z)
 
         beta_aux = np.linalg.lstsq(Z, u2, rcond=None)[0]
@@ -236,7 +236,10 @@ class LinearModel:
 
         return {"LM": lm, "df": df, "p-value": p_value, "interpretation": interpretation}
 
-    def diagnostics(self, alpha: float = 0.05) -> dict[str, dict[str, float | str]]:
+    def diagnostics(self, alpha: float = 0.05, gq_sort_by: int = 1,
+                park_index: int = 0,
+                glejser_index: int = 0,
+                glejser_transform: str = "sqrt") -> dict[str, dict[str, float | str]]:
         """
         Run diagnostic tests for heteroscedasticity and residual normality.
 
@@ -273,12 +276,13 @@ class LinearModel:
             "white": white,
             "shapiro_wilk": shapiro_result,
             "dagostino_k2": k2,
-            "goldfeld_quandt": self.goldfeld_quandt_test(alpha=alpha),
-            "park": self.park_test(alpha=alpha),
-            "glejser": self.glejser_test(alpha=alpha)
+            "goldfeld_quandt": self.goldfeld_quandt_test(sort_by=gq_sort_by, alpha=alpha),
+            "park": self.park_test(predictor_index=park_index, alpha=alpha),
+            "glejser": self.glejser_test(predictor_index=glejser_index, transform=glejser_transform, alpha=alpha),
+
         }
 
-    def goldfeld_quandt_test(self, sort_by: int = 1, drop_fraction: float = 0.2, alpha: float = 0.05) -> dict[str, float | str]:
+    def goldfeld_quandt_test(self, sort_by: int = 1, drop_fraction: float = 0.2, alpha: float = 0.05) -> dict[str, Union[float, np.float64, np.ndarray, str]]:
         """
         Goldfeld–Quandt test for heteroscedasticity.
 
@@ -484,6 +488,81 @@ class LinearModel:
             "transformation": transform,
             "interpretation": interpretation
         }
+    
+    def print_diagnostics(self, alpha: float = 0.05) -> None:
+        """
+        Print formatted diagnostics for heteroscedasticity and normality.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level for interpretations.
+        """
+        diag = self.diagnostics(alpha=alpha)
+
+        def print_section(title: str, result: dict[str, float | str]) -> None:
+            print(f"\n{title}")
+            print("-" * len(title))
+            for key, value in result.items():
+                label = key.replace('_', ' ').capitalize()
+                if isinstance(value, float):
+                    print(f"{label:<20}: {value:.4f}")
+                else:
+                    print(f"{label:<20}: {value}")
+
+        print("\nDiagnostics Summary")
+        print("=" * 20)
+
+        print_section("Breusch–Pagan Test", diag["breusch_pagan"])
+        print_section("White Test", diag["white"])
+        print_section("D'Agostino K² Normality Test", diag["dagostino_k2"])
+        print_section("Goldfeld–Quandt Test", diag["goldfeld_quandt"])
+        print_section("Park Test", diag["park"])
+        print_section("Glejser Test", diag["glejser"])
+        
+        
+    def diagnostics_to_latex(self, alpha: float = 0.05) -> str:
+        """
+        Export diagnostics summary as a LaTeX tabular environment.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        str
+            LaTeX string representing the diagnostics table.
+        """
+        diag = self.diagnostics(alpha=alpha)
+
+        def format_row(test: str, metric: str, value: float | str) -> str:
+            if isinstance(value, float):
+                return f"{test} & {metric} & {value:.4f} \\\\"
+            return f"{test} & {metric} & {value} \\\\"
+
+        rows = []
+        for test, results in diag.items():
+            test_name = test.replace("_", " ").title()
+            for key, val in results.items():
+                metric = key.replace("_", " ").capitalize()
+                rows.append(format_row(test_name, metric, val))
+
+        body = "\n".join(rows)
+        table = (
+            "\\begin{tabular}{lll}\n"
+            "\\toprule\n"
+            "Test & Metric & Value \\\\\n"
+            "\\midrule\n"
+            f"{body}\n"
+            "\\bottomrule\n"
+            "\\end{tabular}"
+        )
+
+        return table
+
+
 
     def fit_wls(self, X: np.ndarray, y: np.ndarray, weights: np.ndarray) -> None:
         model = WeightedLinearModel(weights=weights)
