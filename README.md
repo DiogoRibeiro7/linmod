@@ -1,3 +1,4 @@
+```text
 linmod/
 ├── __init__.py
 ├── core.py                      # LinearModel core + wrappers: WLS, GLS, Ridge, Lasso, ElasticNet
@@ -41,3 +42,4 @@ linmod/
 ├── pyproject.toml              # Poetry build config
 ├── README.md
 └── LICENSE
+```
