@@ -86,3 +86,57 @@ class LogisticRegressionGLM(BaseGLM):
         for i, coef in enumerate(summary["coefficients"]):
             name = "Intercept" if i == 0 else f"x{i}"
             print(f"  {name:<10}: {coef:.4f}")
+            
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict probabilities for binary classification.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Design matrix.
+
+        Returns
+        -------
+        np.ndarray
+            Probability estimates between 0 and 1.
+        """
+        return self.predict(X, type="response")
+
+    def predict_class(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+        """
+        Predict binary class labels.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Design matrix.
+        threshold : float
+            Cutoff to assign class labels.
+
+        Returns
+        -------
+        np.ndarray
+            Array of 0 or 1 class predictions.
+        """
+        return (self.predict_proba(X) >= threshold).astype(int)
+    
+    def log_likelihood(self, X: np.ndarray, y: np.ndarray) -> float:
+        """
+        Compute the log-likelihood for logistic regression.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Design matrix.
+        y : np.ndarray
+            Binary response vector.
+
+        Returns
+        -------
+        float
+            Log-likelihood value.
+        """
+        mu = self.predict_proba(X)
+        eps = 1e-8
+        return float(np.sum(y * np.log(mu + eps) + (1 - y) * np.log(1 - mu + eps)))

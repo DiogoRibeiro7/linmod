@@ -1,8 +1,9 @@
 # linmod/glm/poisson.py
 
 import numpy as np
-from linmod.glm.base import BaseGLM
-from linmod.glm.links import LogLink
+from linmod.model.glm.base import BaseGLM
+from linmod.model.glm.links import LogLink
+from scipy.special import gammaln  # for log(y!)
 
 
 class PoissonRegressionGLM(BaseGLM):
@@ -115,3 +116,21 @@ class PoissonRegressionGLM(BaseGLM):
             print(f"  {name:<10}: {coef:.4f}")
 
 
+    def log_likelihood(self, X: np.ndarray, y: np.ndarray) -> float:
+        """
+        Compute the log-likelihood for Poisson regression.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Design matrix.
+        y : np.ndarray
+            Count response vector.
+
+        Returns
+        -------
+        float
+            Log-likelihood value.
+        """
+        mu = self.predict(X, type="response")
+        return np.sum(y * np.log(mu + 1e-8) - mu - gammaln(y + 1))
