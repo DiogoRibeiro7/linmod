@@ -5,6 +5,7 @@ from scipy import stats
 from typing import Any, Union
 
 from linmod.base import BaseLinearModel
+from linmod.inference import LinearInferenceMixin
 from linmod.stats.wls import WeightedLinearModel
 from linmod.stats.gls import GeneralizedLinearModel
 from linmod.regularization.ridge import RidgeLinearModel
@@ -12,24 +13,25 @@ from linmod.regularization.lasso import LassoLinearModel
 from linmod.regularization.elasticnet import ElasticNetLinearModel
 from linmod.evaluation.crossval import cross_val_score
 
+class LinearModel(BaseLinearModel, LinearInferenceMixin):
+    def __init__(self):
+        BaseLinearModel.__init__(self)
+        LinearInferenceMixin.__init__(self)
 
-class LinearModel(BaseLinearModel):
-    def __init__(self) -> None:
-        super().__init__()
-        self.std_errors: np.ndarray | None = None
-        self.robust_std_errors: np.ndarray | None = None
-        self.t_values: np.ndarray | None = None
-        self.p_values: np.ndarray | None = None
-        self.confidence_intervals: np.ndarray | None = None
-        self.anova_table: dict[str, Any] | None = None
-        self.df_residual: int | None = None
-        self.residual_std_error: float | None = None
-        self.r_squared: float | None = None
-        self.adj_r_squared: float | None = None
-        self.f_statistic: float | None = None
-        self.f_p_value: float | None = None
+        self.std_errors = None
+        self.robust_std_errors = None
+        self.t_values = None
+        self.p_values = None
+        self.confidence_intervals = None
+        self.anova_table = None
+        self.residual_std_error = None
+        self.r_squared = None
+        self.adj_r_squared = None
+        self.f_statistic = None
+        self.f_p_value = None
+        self.df_residual = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray, alpha: float = 0.05) -> None:
+    def fit(self, X: np.ndarray, y: np.ndarray, alpha: float | None = None, robust: str | None = None) -> None:
         """
         Fit the linear regression model using Ordinary Least Squares.
 
@@ -39,78 +41,39 @@ class LinearModel(BaseLinearModel):
             Design matrix (n_samples, n_features) excluding intercept.
         y : np.ndarray
             Response variable (n_samples,).
-        alpha : float
-            Confidence level for intervals (default=0.05).
+        alpha : float, optional
+            Confidence level (default uses self._inference_alpha).
+        robust : str, optional
+            Robust SE type: 'HC0', ..., 'HC4' (default uses self._inference_robust).
         """
-        n_samples, n_features = X.shape
-        self.X_design_ = np.hstack([np.ones((n_samples, 1)), X])
-        p = self.X_design_.shape[1]
+        beta, y_pred, residuals = self._fit_ols_via_pinv(X, y)
 
-        XtX = self.X_design_.T @ self.X_design_
-        XtX_inv = np.linalg.pinv(XtX)
-        beta = XtX_inv @ self.X_design_.T @ y
-        y_pred = self.X_design_ @ beta
-        residuals = y - y_pred
+        alpha = alpha if alpha is not None else self._inference_alpha
+        robust = robust if robust is not None else self._inference_robust
 
-        rss = np.sum(residuals**2)
-        tss = np.sum((y - y.mean())**2)
-        df_residual = n_samples - p
-        df_model = p - 1
+        inference = self.compute_inference(
+            beta, self.X_design_, y, residuals,
+            alpha=alpha,
+            robust=robust
+        )
 
-        mse = rss / df_residual
-        se_beta = np.sqrt(np.diag(mse * XtX_inv))
+        self.std_errors = inference["std_errors"]
+        self.robust_std_errors = inference["robust_std_errors"]
+        self.t_values = inference["t_values"]
+        self.p_values = inference["p_values"]
+        self.confidence_intervals = inference["confidence_intervals"]
+        self.anova_table = inference["anova_table"]
+        self.residual_std_error = inference["residual_std_error"]
+        self.r_squared = inference["r_squared"]
+        self.adj_r_squared = inference["adj_r_squared"]
+        self.f_statistic = inference["f_statistic"]
+        self.f_p_value = inference["f_p_value"]
+        self.df_residual = inference["df_residual"]
 
-        t_stats = beta / se_beta
-        p_vals = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=df_residual))
-
-        t_crit = stats.t.ppf(1 - alpha / 2, df=df_residual)
-        ci_lower = beta - t_crit * se_beta
-        ci_upper = beta + t_crit * se_beta
-        conf_ints = np.column_stack([ci_lower, ci_upper])
-
-        ms_model = (tss - rss) / df_model
-        f_stat = ms_model / mse
-        f_p_val = 1 - stats.f.cdf(f_stat, df_model, df_residual)
-
-        # Robust standard errors (HC0 by default here)
-        u = residuals.reshape(-1, 1)
-        S = np.diagflat(u**2)
-        sandwich = XtX_inv @ self.X_design_.T @ S @ self.X_design_ @ XtX_inv
-        robust_se = np.sqrt(np.diag(sandwich))
-
-        ssr = tss - rss
-        msr = ssr / df_model
-
-        self.anova_table = {
-            "df": np.array([df_model, df_residual]),
-            "SS": np.array([ssr, rss]),
-            "MS": np.array([msr, mse]),
-            "F": np.array([f_stat, np.nan]),
-            "p": np.array([f_p_val, np.nan])
-        }
-
-        self.coefficients = beta
-        self.std_errors = se_beta
-        self.robust_std_errors = robust_se
-        self.t_values = t_stats
-        self.p_values = p_vals
-        self.confidence_intervals = conf_ints
-        self.fitted_values = y_pred
-        self.residuals = residuals
-        self.df_residual = df_residual
-        self.residual_std_error = np.sqrt(mse)
-        self.r_squared = 1 - rss / tss
-        self.adj_r_squared = 1 - (1 - self.r_squared) * \
-            (n_samples - 1) / df_residual
-        self.f_statistic = f_stat
-        self.f_p_value = f_p_val
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        return self.intercept + X @ self.coefficients
 
     def summary(self) -> dict[str, Any]:
         """
-        Return model summary statistics.
+        Return model summary statistics, including inference configuration.
 
         Returns
         -------
@@ -121,21 +84,26 @@ class LinearModel(BaseLinearModel):
             raise ValueError("Model is not fit yet.")
 
         return {
+            "intercept": self.intercept,
             "coefficients": self.coefficients,
             "std_errors": self.std_errors,
             "robust_std_errors": self.robust_std_errors,
             "t_values": self.t_values,
             "p_values": self.p_values,
             "confidence_intervals": self.confidence_intervals,
-            "fitted.values": self.fitted_values,
-            "residuals": self.residuals,
-            "df.residual": self.df_residual,
-            "residual std error": self.residual_std_error,
-            "r.squared": self.r_squared,
-            "adj.r.squared": self.adj_r_squared,
-            "f.statistic": self.f_statistic,
-            "f.p.value": self.f_p_value
+            "residual_std_error": self.residual_std_error,
+            "df_residual": self.df_residual,
+            "r_squared": self.r_squared,
+            "adj_r_squared": self.adj_r_squared,
+            "f_statistic": self.f_statistic,
+            "f_p_value": self.f_p_value,
+            "anova_table": self.anova_table,
+            "inference_config": {
+                "alpha": self._inference_alpha,
+                "robust_type": self._inference_robust
+            }
         }
+
 
     def anova(self) -> dict[str, Any]:
         """

@@ -2,7 +2,8 @@
 ```text
 linmod/
 ├── __init__.py
-├── core.py                      # LinearModel core + wrappers: WLS, GLS, Ridge, Lasso, ElasticNet
+├── core.py                      # LinearModel core + wrappers: WLS, GLS, Ridge, Lasso, 
+├── inference.py
 ├── diagnostics.py               # Residual tests, normality, functional form
 ├── transforms.py                # Model suggestion, fit_transformed()
 ├── plots.py                     # Residual, leverage, influence, CR plots
