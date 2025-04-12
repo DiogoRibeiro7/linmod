@@ -174,9 +174,17 @@ class RobustLinearModel:
         if self.std_errors_ is None:
             raise ValueError("Standard errors must be computed before calling inference_summary.")
 
+        # Compute the standard error for the intercept
+        intercept_se = np.sqrt(
+            np.sum((self.residuals**2) / (self.X_design_[:, 0]**2)) / (len(self.residuals) - len(self.coefficients) - 1)
+        )
+
+        # Concatenate the intercept's standard error with the predictors' standard errors
+        std_errors_with_intercept = np.concatenate(([intercept_se], self.std_errors_))
+
         infer = inference_summary(
             coefficients=np.concatenate((np.array([self.intercept]), self.coefficients)),
-            std_errors=self.std_errors_,
+            std_errors=std_errors_with_intercept,
             # Removed df_residual as it is not a valid parameter
             alpha=0.05
         )
