@@ -53,14 +53,44 @@ class RobustLinearModel:
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
-        Fit the robust linear regression model via IRLS.
+        Fit the robust linear model to the given data.
 
-        Parameters
-        ----------
+        This method estimates the model coefficients using an iterative reweighted 
+        least squares (IRLS) approach, which minimizes the influence of outliers 
+        by applying a robust weighting function.
+
+        Parameters:
+        -----------
         X : np.ndarray
-            Predictor matrix, shape (n_samples, n_features)
+            The design matrix of shape (n_samples, n_features), where each row 
+            represents a sample and each column represents a feature.
         y : np.ndarray
-            Response vector, shape (n_samples,)
+            The response vector of shape (n_samples,), containing the target values.
+
+        Returns:
+        --------
+        None
+            The method updates the following attributes of the object:
+            - `coefficients` : np.ndarray
+                The estimated coefficients for the features.
+            - `intercept` : float
+                The estimated intercept term.
+            - `fitted_values` : np.ndarray
+                The predicted values based on the fitted model.
+            - `residuals` : np.ndarray
+                The residuals (differences between observed and predicted values).
+            - `weights` : np.ndarray
+                The final weights applied to each observation.
+            - `X_design_` : np.ndarray
+                The design matrix with an added intercept column.
+
+        Notes:
+        ------
+        - The method stops iterating when the change in coefficients is below 
+          the specified tolerance (`self.tol`) or when the scale of residuals 
+          becomes too small.
+        - The weighting function (`self.psi`) and scale estimator (`self.scale_estimator`) 
+          are user-defined and determine the robustness of the fitting process.
         """
         n, p = X.shape
         X_design = np.column_stack([np.ones(n), X])
@@ -70,7 +100,6 @@ class RobustLinearModel:
             y_pred = X_design @ beta
             residuals = y - y_pred
             scale = self.scale_estimator(residuals)
-
             if scale < 1e-8:
                 break
 
@@ -79,13 +108,10 @@ class RobustLinearModel:
             w = np.where(np.abs(u) < 1e-8, 1.0, w)
 
             W = np.diag(w)
-            beta_new = np.linalg.pinv(
-                X_design.T @ W @ X_design) @ X_design.T @ W @ y
-
+            beta_new = np.linalg.pinv(X_design.T @ W @ X_design) @ X_design.T @ W @ y
             if np.linalg.norm(beta_new - beta) < self.tol:
                 beta = beta_new
                 break
-
             beta = beta_new
 
         self.X_design_ = X_design
@@ -94,12 +120,13 @@ class RobustLinearModel:
         self.fitted_values = X_design @ beta
         self.residuals = y - self.fitted_values
         self.weights = w
-        if self.residuals is None:
-            raise ValueError("Residuals are not available. Fit the model before computing standard errors.")
-        if self.weights is None:
-            raise ValueError("Weights are not available. Fit the model before computing standard errors.")
-        self.std_errors_ = compute_sandwich_se(X, self.residuals, self.weights)
 
+        self._compute_standard_errors()
+
+    def _compute_standard_errors(self) -> None:
+        if self.X_design_ is None or self.residuals is None or self.weights is None:
+            raise ValueError("Fit the model before computing standard errors.")
+        self.std_errors_ = compute_sandwich_se(self.X_design_[:, 1:], self.residuals, self.weights)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
