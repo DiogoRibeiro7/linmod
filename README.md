@@ -31,55 +31,60 @@ It supports:
 
 ```text
 linmod/
-├── core.py               # LinearModel (coordenador principal)
-├── model/                # Estratégias de modelagem
-│   ├── ols.py            # OLS logic
-│   ├── wls.py            # WeightedLinearModel
-│   ├── gls.py            # GeneralizedLinearModel
+├── core.py                   # LinearModel (main coordinator class)
 │
-├── inference/            # Inferência estatística
-│   ├── base.py           # LinearInferenceMixin
-│   ├── summary.py        # .summary(), anova()
-│   └── robust_se.py      # compute_robust_se
-
-├── diagnostics/          # Diagnósticos e testes
-│   ├── base.py           # diagnostics(), print_diagnostics(), to_latex()
-│   ├── normality.py      # shapiro, dagostino_k2
-│   ├── heteroscedasticity.py  # BP, White, GQ, Park, Glejser, Power
-│   ├── functional_form.py     # RESET, White-nonlinearity, Harvey-Collier
-
-├── transforms/           # Sugestões e aplicação de transformações
-│   ├── recommend.py      # recommend_transformations()
-│   ├── build.py          # suggest_transformed_model()
-│   └── fit_transformed.py
-
-├── regularization/
-│   ├── ridge.py
-│   ├── lasso.py
-│   ├── elasticnet.py
-
-├── evaluation/
-│   └── crossval.py
-
-├── formula/                    # [Planned] Patsy-style formulas, ANOVA support
+├── model/                    # Modeling strategies (OLS, WLS, GLS)
+│   ├── ols.py                # Ordinary Least Squares implementation
+│   ├── wls.py                # Weighted Least Squares model
+│   └── gls.py                # Generalized Least Squares model
+│
+├── inference/                # Statistical inference methods
+│   ├── base.py               # LinearInferenceMixin
+│   ├── summary.py            # Summary statistics and ANOVA
+│   └── robust_se.py          # HC0–HC4 robust SE computation
+│
+├── diagnostics/              # Diagnostic test modules
+│   ├── normality.py          # Shapiro-Wilk, D’Agostino K², heuristic
+│   ├── heteroscedasticity.py # BP, White, GQ, Park, Glejser, variance power
+│   ├── functional_form.py    # RESET, White-nonlinearity, Harvey–Collier
+│
+├── transform/                # Transformation logic and mixins
+│   ├── recommend.py          # recommend_transformations()
+│   ├── build.py              # suggest_transformed_model()
+│   ├── fit.py                # fit_transformed() logic (optional)
+│   └── mixin.py              # TransformMixin
+│
+├── mixins/                   # General-purpose mixins
+│   ├── diagnostics.py        # DiagnosticsMixin: .diagnostics(), .to_latex()
+│   └── normality.py          # NormalityMixin: .normality_summary(), .to_latex()
+│
+├── regularization/           # Penalized regression models
+│   ├── ridge.py              # RidgeLinearModel
+│   ├── lasso.py              # LassoLinearModel
+│   └── elasticnet.py         # ElasticNetLinearModel
+│
+├── evaluation/               # Evaluation tools
+│   └── crossval.py           # Cross-validation for model selection
+│
+├── formula/                  # [Planned] Patsy-style formulas and parsing
 │   └── ...
-
-├── timeseries/                 # [Planned] Lag models, DW test, autocorrelation
+│
+├── timeseries/               # [Planned] Time series diagnostics (e.g., DW)
 │   └── ...
-
-├── data/                       # [Optional] Sample datasets
+│
+├── data/                     # [Optional] Sample datasets
 │   └── __init__.py
-
-├── notebooks/                  # Interactive examples
-│   └── demo.ipynb
-
-├── tests/                      # Unit tests
+│
+├── tests/                    # Unit and integration tests
 │   ├── test_linmod.py
 │   ├── test_stats_models.py
-│   ├── test_regularization_models.py
-
-├── app.py                      # Streamlit dashboard (interactive model explorer)
-├── pyproject.toml              # Poetry-based project definition
+│   └── test_regularization_models.py
+│
+├── notebooks/                # Interactive demos and exploration
+│   └── demo.ipynb
+│
+├── app.py                    # Streamlit-based interactive dashboard
+├── pyproject.toml            # Poetry config
 ├── README.md
 └── LICENSE
 ```
