@@ -4,6 +4,8 @@ import os
 from typing import Callable, Optional, Union
 import numpy as np
 
+from linmod.model.robust.se import compute_sandwich_se
+
 
 def mad(residuals: np.ndarray) -> float:
     """Median Absolute Deviation (robust scale estimate)."""
@@ -47,6 +49,7 @@ class RobustLinearModel:
         self.residuals: Optional[np.ndarray] = None
         self.weights: Optional[np.ndarray] = None
         self.X_design_: Optional[np.ndarray] = None
+        self.std_errors_: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
@@ -62,7 +65,6 @@ class RobustLinearModel:
         n, p = X.shape
         X_design = np.column_stack([np.ones(n), X])
         beta = np.linalg.lstsq(X_design, y, rcond=None)[0]
-        weights = np.ones(n)
 
         for _ in range(self.max_iter):
             y_pred = X_design @ beta
@@ -92,6 +94,12 @@ class RobustLinearModel:
         self.fitted_values = X_design @ beta
         self.residuals = y - self.fitted_values
         self.weights = w
+        if self.residuals is None:
+            raise ValueError("Residuals are not available. Fit the model before computing standard errors.")
+        if self.weights is None:
+            raise ValueError("Weights are not available. Fit the model before computing standard errors.")
+        self.std_errors_ = compute_sandwich_se(X, self.residuals, self.weights)
+
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
