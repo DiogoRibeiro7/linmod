@@ -13,6 +13,14 @@ from linmod.regularization.lasso import LassoLinearModel
 from linmod.regularization.elasticnet import ElasticNetLinearModel
 from linmod.evaluation.crossval import cross_val_score
 
+from linmod.diagnostics.normality import (
+    shapiro_wilk_test,
+    dagostino_k2,
+    normality_heuristic
+)
+
+from linmod.transforms.build import suggest_transformed_model
+
 class LinearModel(BaseLinearModel, LinearInferenceMixin):
     def __init__(self):
         BaseLinearModel.__init__(self)
@@ -30,6 +38,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         self.f_statistic = None
         self.f_p_value = None
         self.df_residual = None
+        self._transformation_steps = None  # Initialize transformation steps
+        self._transformed_features = None  # Initialize transformed features
 
     def fit(self, X: np.ndarray, y: np.ndarray, alpha: float | None = None, robust: str | None = None) -> None:
         """
@@ -954,7 +964,19 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         LinearModel
             A new model trained on transformed data.
         """
-        suggestion = self.suggest_transformed_model(alpha=alpha)
+        if self.X_design_ is None or self.residuals is None or self.fitted_values is None:
+            raise ValueError("Fit the model before calling fit_transformed().")
+
+        diag = self.diagnostics(alpha=alpha)
+
+        suggestion = suggest_transformed_model(
+            self.X_design_,
+            self.residuals,
+            self.fitted_values,
+            diag,
+            alpha=alpha
+        )
+
         X_trans = suggestion["X_trans"]
         y_trans = suggestion["y_trans"]
 
@@ -966,6 +988,7 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         model._transformed_features = suggestion["features"]
 
         return model
+
 
 
 

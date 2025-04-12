@@ -30,26 +30,35 @@ It supports:
 
 ```text
 linmod/
-├── core.py                      # LinearModel core + fit_wls(), fit_ridge(), etc.
-├── inference.py                 # Inference mixin: SEs, t-tests, ANOVA, robust errors
-├── diagnostics.py               # Residual tests, functional form checks
-├── transforms.py                # Transformation logic, fit_clean_transformed()
-├── plots.py                     # Residuals, leverage, influence, component+residual
-├── export.py                    # LaTeX/text summaries
-├── utils.py                     # Weights, residuals, leverage, Cook's D, DFFITS
+├── core.py               # LinearModel (coordenador principal)
+├── model/                # Estratégias de modelagem
+│   ├── ols.py            # OLS logic
+│   ├── wls.py            # WeightedLinearModel
+│   ├── gls.py            # GeneralizedLinearModel
+│
+├── inference/            # Inferência estatística
+│   ├── base.py           # LinearInferenceMixin
+│   ├── summary.py        # .summary(), anova()
+│   └── robust_se.py      # compute_robust_se
 
-├── stats/
-│   ├── wls.py                   # Weighted Least Squares model
-│   ├── gls.py                   # Generalized Least Squares model
-│   └── hypothesis.py            # Linear hypothesis testing (Rβ = q)
+├── diagnostics/          # Diagnósticos e testes
+│   ├── base.py           # diagnostics(), print_diagnostics(), to_latex()
+│   ├── normality.py      # shapiro, dagostino_k2
+│   ├── heteroscedasticity.py  # BP, White, GQ, Park, Glejser, Power
+│   ├── functional_form.py     # RESET, White-nonlinearity, Harvey-Collier
+
+├── transforms/           # Sugestões e aplicação de transformações
+│   ├── recommend.py      # recommend_transformations()
+│   ├── build.py          # suggest_transformed_model()
+│   └── fit_transformed.py
 
 ├── regularization/
-│   ├── ridge.py                 # Ridge regression (closed-form)
-│   ├── lasso.py                 # Lasso regression (coordinate descent)
-│   ├── elasticnet.py            # ElasticNet regression
+│   ├── ridge.py
+│   ├── lasso.py
+│   ├── elasticnet.py
 
 ├── evaluation/
-│   └── crossval.py              # Generic k-fold CV runner for regularized models
+│   └── crossval.py
 
 ├── formula/                    # [Planned] Patsy-style formulas, ANOVA support
 │   └── ...
