@@ -4,6 +4,9 @@ import os
 from typing import Callable, Optional, Union
 import numpy as np
 
+from linmod.model.robust.se import compute_sandwich_se
+from linmod.model.robust.summary import inference_summary, anova_like_summary
+
 
 def mad(residuals: np.ndarray) -> float:
     """Median Absolute Deviation (robust scale estimate)."""
@@ -47,28 +50,57 @@ class RobustLinearModel:
         self.residuals: Optional[np.ndarray] = None
         self.weights: Optional[np.ndarray] = None
         self.X_design_: Optional[np.ndarray] = None
+        self.std_errors_: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
-        Fit the robust linear regression model via IRLS.
+        Fit the robust linear model to the given data.
 
-        Parameters
-        ----------
+        This method estimates the model coefficients using an iterative reweighted 
+        least squares (IRLS) approach, which minimizes the influence of outliers 
+        by applying a robust weighting function.
+
+        Parameters:
+        -----------
         X : np.ndarray
-            Predictor matrix, shape (n_samples, n_features)
+            The design matrix of shape (n_samples, n_features), where each row 
+            represents a sample and each column represents a feature.
         y : np.ndarray
-            Response vector, shape (n_samples,)
+            The response vector of shape (n_samples,), containing the target values.
+
+        Returns:
+        --------
+        None
+            The method updates the following attributes of the object:
+            - `coefficients` : np.ndarray
+                The estimated coefficients for the features.
+            - `intercept` : float
+                The estimated intercept term.
+            - `fitted_values` : np.ndarray
+                The predicted values based on the fitted model.
+            - `residuals` : np.ndarray
+                The residuals (differences between observed and predicted values).
+            - `weights` : np.ndarray
+                The final weights applied to each observation.
+            - `X_design_` : np.ndarray
+                The design matrix with an added intercept column.
+
+        Notes:
+        ------
+        - The method stops iterating when the change in coefficients is below 
+          the specified tolerance (`self.tol`) or when the scale of residuals 
+          becomes too small.
+        - The weighting function (`self.psi`) and scale estimator (`self.scale_estimator`) 
+          are user-defined and determine the robustness of the fitting process.
         """
         n, p = X.shape
         X_design = np.column_stack([np.ones(n), X])
         beta = np.linalg.lstsq(X_design, y, rcond=None)[0]
-        weights = np.ones(n)
 
         for _ in range(self.max_iter):
             y_pred = X_design @ beta
             residuals = y - y_pred
             scale = self.scale_estimator(residuals)
-
             if scale < 1e-8:
                 break
 
@@ -77,13 +109,10 @@ class RobustLinearModel:
             w = np.where(np.abs(u) < 1e-8, 1.0, w)
 
             W = np.diag(w)
-            beta_new = np.linalg.pinv(
-                X_design.T @ W @ X_design) @ X_design.T @ W @ y
-
+            beta_new = np.linalg.pinv(X_design.T @ W @ X_design) @ X_design.T @ W @ y
             if np.linalg.norm(beta_new - beta) < self.tol:
                 beta = beta_new
                 break
-
             beta = beta_new
 
         self.X_design_ = X_design
@@ -92,6 +121,13 @@ class RobustLinearModel:
         self.fitted_values = X_design @ beta
         self.residuals = y - self.fitted_values
         self.weights = w
+
+        self._compute_standard_errors()
+
+    def _compute_standard_errors(self) -> None:
+        if self.X_design_ is None or self.residuals is None or self.weights is None:
+            raise ValueError("Fit the model before computing standard errors.")
+        self.std_errors_ = compute_sandwich_se(self.X_design_[:, 1:], self.residuals, self.weights)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
@@ -113,42 +149,71 @@ class RobustLinearModel:
 
     def summary(self) -> dict[str, Union[float, np.ndarray]]:
         """
-        Return model summary statistics.
+        Return extended robust model summary statistics.
 
         Returns
         -------
         dict
-            Dictionary with intercept, coefficients, residual statistics, and IRLS weights.
+            Dictionary with intercept, coefficients, inference, residual stats, and weights.
         """
         if self.coefficients is None or self.fitted_values is None:
             raise ValueError("Model must be fit before calling summary().")
 
-        if self.X_design_ is None:
-            raise ValueError(
-                "X_design_ is not available. Fit the model before calling summary().")
-        n = self.X_design_.shape[0]
-        if self.X_design_ is None:
-            raise ValueError(
-                "X_design_ is not available. Fit the model before calling summary().")
-        p = self.X_design_.shape[1] - 1
+        if self.X_design_ is None or self.residuals is None:
+            raise ValueError("Model must be fit before calling summary().")
 
-        if self.residuals is None:
-            raise ValueError(
-                "Residuals are not available. Fit the model before calling summary().")
+        n, p_plus1 = self.X_design_.shape
+        p = p_plus1 - 1
+        df_residual = n - p - 1
+
+        # Residual standard error (manually computed here)
         rss = np.sum(self.residuals**2)
-        rse = np.sqrt(rss / (n - p - 1))
-        weights_mean = np.mean(
-            self.weights) if self.weights is not None else None
+        rse = np.sqrt(rss / df_residual)
+
+        # Compute t-stats, p-values, CIs
+        if self.std_errors_ is None:
+            raise ValueError("Standard errors must be computed before calling inference_summary.")
+
+        # Compute the standard error for the intercept
+        intercept_se = np.sqrt(
+            np.sum((self.residuals**2) / (self.X_design_[:, 0]**2)) / (len(self.residuals) - len(self.coefficients) - 1)
+        )
+
+        # Concatenate the intercept's standard error with the predictors' standard errors
+        std_errors_with_intercept = np.concatenate(([intercept_se], self.std_errors_))
+
+        infer = inference_summary(
+            coefficients=np.concatenate((np.array([self.intercept]), self.coefficients)),
+            std_errors=std_errors_with_intercept,
+            # Removed df_residual as it is not a valid parameter
+            alpha=0.05
+        )
+
+        # ANOVA-like metrics (R², adjusted R², F-statistic)
+        anova = anova_like_summary(
+            y_true=self.fitted_values + self.residuals,
+            y_pred=self.fitted_values,
+            p=len(self.coefficients)
+        )
 
         return {
-            "intercept": self.intercept if self.intercept is not None else 0.0,
+            "intercept": self.intercept,
             "coefficients": self.coefficients,
             "residual_std_error": rse,
-            "degrees_of_freedom": n - p - 1,
-            "mean_weight": float(weights_mean) if weights_mean is not None else 0.0,
+            "degrees_of_freedom": df_residual,
+            "mean_weight": float(np.mean(self.weights)) if self.weights is not None else 0.0,
             "n_iter": self.max_iter,
-            "weighted": True
+            "weighted": True,
+            "std_errors": self.std_errors_,
+            "t_values": infer["t_values"],
+            "p_values": infer["p_values"],
+            "confidence_intervals": infer["confidence_intervals"],
+            "r_squared": anova["r_squared"],
+            "adj_r_squared": anova["adj_r_squared"],
+            "f_statistic": anova["f_statistic"],
+            "f_p_value": anova["f_p_value"]
         }
+
 
     def summary_to_latex(self) -> str:
         """
