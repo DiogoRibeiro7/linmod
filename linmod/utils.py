@@ -1,3 +1,4 @@
+import pandas as pd
 import numpy as np
 
 
@@ -161,3 +162,41 @@ def dffits(residuals: np.ndarray, leverage: np.ndarray, sigma2: float) -> np.nda
         DFFITS values.
     """
     return studentized_residuals(residuals, leverage, sigma2) * np.sqrt(leverage / (1 - leverage))
+
+
+def influence_summary(
+    X_design: np.ndarray,
+    residuals: np.ndarray,
+    sigma2: float
+) -> pd.DataFrame:
+    """
+    Create a summary table with influence diagnostics.
+
+    Parameters
+    ----------
+    X_design : np.ndarray
+        Design matrix (with intercept).
+    residuals : np.ndarray
+        Residual vector.
+    sigma2 : float
+        Estimated residual variance.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame with leverage, studentized residuals,
+        Cook's distance and DFFITS for each observation.
+    """
+    n, p = X_design.shape
+
+    leverage = leverage_scores(X_design)
+    stud_resid = studentized_residuals(residuals, leverage, sigma2)
+    cooks = cooks_distance(residuals, leverage, p, sigma2)
+    dffits_ = dffits(residuals, leverage, sigma2)
+
+    return pd.DataFrame({
+        "leverage": leverage,
+        "studentized_resid": stud_resid,
+        "cooks_distance": cooks,
+        "dffits": dffits_
+    })
