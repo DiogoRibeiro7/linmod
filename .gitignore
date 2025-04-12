@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Coverage
+htmlcov/
+coverage.xml
+.cache/
+.tox/
+
+# Test output
+.pytest_cache/
+nosetests.xml
+test-results.xml
+
+# Build artefacts
+dist/
+build/
+*.egg-info/
+
+# Virtual envs (if any)
+.venv/
+env/
+venv/
+
+# Jupyter runtime
+*.pid
+*.log
+
+# Streamlit state
+.streamlit/
+
+# Mac OS
+.DS_Store
+
+# VSCode / JetBrains / other IDEs
+.vscode/
+.idea/
+
+# Poetry lock if regenerating from scratch
+poetry.lock
