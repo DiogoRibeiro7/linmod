@@ -43,3 +43,5 @@ venv/
 
 # Poetry lock if regenerating from scratch
 poetry.lock
+
+.txt

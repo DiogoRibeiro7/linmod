@@ -32,6 +32,7 @@ It supports:
 ```text
 linmod/
 ├── core.py               # LinearModel (coordenador principal)
+├── base.py               # LinearModel (coordenador principal)
 ├── stats/                # Estratégias de modelagem
 │   ├── wls.py            # WeightedLinearModel
 │   ├── gls.py            # GeneralizedLinearModel
