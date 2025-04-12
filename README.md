@@ -3,10 +3,11 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/linmod)](https://pypi.org/project/linmod/)
 [![Python versions](https://img.shields.io/pypi/pyversions/linmod)](https://pypi.org/project/linmod/)
-[![CI](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml/badge.svg)](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml)
-[![Coverage Report](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml/badge.svg?branch=main)](https://DiogoRibeiro7.github.io/linmod/)
+<!-- [![CI](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml/badge.svg)](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml)
+[![Coverage Report](https://github.com/DiogoRibeiro7/linmod/actions/workflows/test.yml/badge.svg?branch=main)](https://DiogoRibeiro7.github.io/linmod/) -->
 
 
+📍 **Project Roadmap:** [See ROADMAP.md](./ROADMAP.md)
 
 ---
 
