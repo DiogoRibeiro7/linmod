@@ -5,6 +5,7 @@ from typing import Callable, Optional, Union
 import numpy as np
 
 from linmod.model.robust.se import compute_sandwich_se
+from linmod.model.robust.summary import inference_summary, anova_like_summary
 
 
 def mad(residuals: np.ndarray) -> float:
@@ -148,42 +149,63 @@ class RobustLinearModel:
 
     def summary(self) -> dict[str, Union[float, np.ndarray]]:
         """
-        Return model summary statistics.
+        Return extended robust model summary statistics.
 
         Returns
         -------
         dict
-            Dictionary with intercept, coefficients, residual statistics, and IRLS weights.
+            Dictionary with intercept, coefficients, inference, residual stats, and weights.
         """
         if self.coefficients is None or self.fitted_values is None:
             raise ValueError("Model must be fit before calling summary().")
 
-        if self.X_design_ is None:
-            raise ValueError(
-                "X_design_ is not available. Fit the model before calling summary().")
-        n = self.X_design_.shape[0]
-        if self.X_design_ is None:
-            raise ValueError(
-                "X_design_ is not available. Fit the model before calling summary().")
-        p = self.X_design_.shape[1] - 1
+        if self.X_design_ is None or self.residuals is None:
+            raise ValueError("Model must be fit before calling summary().")
 
-        if self.residuals is None:
-            raise ValueError(
-                "Residuals are not available. Fit the model before calling summary().")
+        n, p_plus1 = self.X_design_.shape
+        p = p_plus1 - 1
+        df_residual = n - p - 1
+
+        # Residual standard error (manually computed here)
         rss = np.sum(self.residuals**2)
-        rse = np.sqrt(rss / (n - p - 1))
-        weights_mean = np.mean(
-            self.weights) if self.weights is not None else None
+        rse = np.sqrt(rss / df_residual)
+
+        # Compute t-stats, p-values, CIs
+        if self.std_errors_ is None:
+            raise ValueError("Standard errors must be computed before calling inference_summary.")
+
+        infer = inference_summary(
+            coefficients=np.concatenate((np.array([self.intercept]), self.coefficients)),
+            std_errors=self.std_errors_,
+            # Removed df_residual as it is not a valid parameter
+            alpha=0.05
+        )
+
+        # ANOVA-like metrics (R², adjusted R², F-statistic)
+        anova = anova_like_summary(
+            y_true=self.fitted_values + self.residuals,
+            y_pred=self.fitted_values,
+            p=len(self.coefficients)
+        )
 
         return {
-            "intercept": self.intercept if self.intercept is not None else 0.0,
+            "intercept": self.intercept,
             "coefficients": self.coefficients,
             "residual_std_error": rse,
-            "degrees_of_freedom": n - p - 1,
-            "mean_weight": float(weights_mean) if weights_mean is not None else 0.0,
+            "degrees_of_freedom": df_residual,
+            "mean_weight": float(np.mean(self.weights)) if self.weights is not None else 0.0,
             "n_iter": self.max_iter,
-            "weighted": True
+            "weighted": True,
+            "std_errors": self.std_errors_,
+            "t_values": infer["t_values"],
+            "p_values": infer["p_values"],
+            "confidence_intervals": infer["confidence_intervals"],
+            "r_squared": anova["r_squared"],
+            "adj_r_squared": anova["adj_r_squared"],
+            "f_statistic": anova["f_statistic"],
+            "f_p_value": anova["f_p_value"]
         }
+
 
     def summary_to_latex(self) -> str:
         """
