@@ -1,8 +1,6 @@
-import math
-from scipy.stats import shapiro
 import numpy as np
 from scipy import stats
-from typing import Any, Union
+from typing import Any
 
 from linmod.base import BaseLinearModel
 from linmod.inference import LinearInferenceMixin
@@ -19,7 +17,23 @@ from linmod.diagnostics.normality import (
     normality_heuristic
 )
 
+from linmod.diagnostics.heteroscedasticity import (
+    white_test,
+    breusch_pagan_test,
+    goldfeld_quandt_test,
+    park_test,
+    glejser_test,
+    variance_power_test
+)
+
+from linmod.diagnostics.functional_form import (
+    reset_test,
+    harvey_collier_test,
+    white_nonlinearity_test
+)
+
 from linmod.transforms.build import suggest_transformed_model
+
 
 class LinearModel(BaseLinearModel, LinearInferenceMixin):
     def __init__(self):
@@ -80,7 +94,6 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         self.f_p_value = inference["f_p_value"]
         self.df_residual = inference["df_residual"]
 
-
     def summary(self) -> dict[str, Any]:
         """
         Return model summary statistics, including inference configuration.
@@ -113,7 +126,6 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
                 "robust_type": self._inference_robust
             }
         }
-
 
     def anova(self) -> dict[str, Any]:
         """
@@ -212,10 +224,14 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
 
         return {"LM": lm, "df": df, "p-value": p_value, "interpretation": interpretation}
 
-    def diagnostics(self, alpha: float = 0.05, gq_sort_by: int = 1,
-                park_index: int = 0,
-                glejser_index: int = 0,
-                glejser_transform: str = "sqrt") -> dict[str, dict[str, float | str]]:
+    def diagnostics(
+        self,
+        alpha: float = 0.05,
+        gq_sort_by: int = 1,
+        park_index: int = 0,
+        glejser_index: int = 0,
+        glejser_transform: str = "sqrt"
+    ) -> dict[str, dict[str, float | str]]:
         """
         Run diagnostic tests for heteroscedasticity and residual normality.
 
@@ -226,249 +242,134 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
 
         Returns
         -------
-        dict with results for Breusch–Pagan, White, and Shapiro–Wilk tests.
+        dict with results for Breusch–Pagan, White, and normality tests.
         """
-        if self.residuals is None or self.X_design_ is None:
-            raise ValueError("Model must be fit before diagnostics.")
+        if self.residuals is None or self.X_design_ is None or self.fitted_values is None:
+            raise ValueError("Model must be fit before running diagnostics.")
 
-        bp = self.breusch_pagan_test(alpha=alpha)
-        white = self.white_test(alpha=alpha)
-
-        # Shapiro–Wilk Test for Normality of Residuals
-        stat, p_value = shapiro(self.residuals)
-        shapiro_result = {
-            "W": stat,
-            "p-value": p_value,
-            "interpretation": (
-                "Residuals are not normally distributed"
-                if p_value < alpha
-                else "Residuals appear normally distributed"
-            )
-        }
-        k2 = dagostino_k2(self.residuals.tolist(), alpha=alpha)
+        # Remove intercept column
+        X_ = self.X_design_[:, 1:]
+        residuals = self.residuals
+        y_raw = self.fitted_values + self.residuals
 
         return {
-            "breusch_pagan": bp,
-            "white": white,
-            "shapiro_wilk": shapiro_result,
-            "dagostino_k2": k2,
-            "goldfeld_quandt": self.goldfeld_quandt_test(sort_by=gq_sort_by, alpha=alpha),
-            "park": self.park_test(predictor_index=park_index, alpha=alpha),
-            "glejser": self.glejser_test(predictor_index=glejser_index, transform=glejser_transform, alpha=alpha),
-            "reset": self.reset_test(alpha=alpha),
-            "variance_power": self.variance_power_test(alpha=alpha),
+            "breusch_pagan": breusch_pagan_test(X_, residuals, alpha=alpha),
+            "white": white_test(X_, residuals, alpha=alpha),
+            "shapiro_wilk": shapiro_wilk_test(residuals, alpha=alpha),
+            "dagostino_k2": dagostino_k2(residuals.tolist(), alpha=alpha),
+            "goldfeld_quandt": goldfeld_quandt_test(X_, y_raw, sort_by=gq_sort_by, alpha=alpha),
+            "park": park_test(X_, residuals, predictor_index=park_index, alpha=alpha),
+            "glejser": glejser_test(X_, residuals, predictor_index=glejser_index, transform=glejser_transform, alpha=alpha),
+            "reset": reset_test(
+                self.X_design_,
+                self.fitted_values + self.residuals,
+                self.fitted_values,
+                self.residuals,
+                alpha=alpha
+            ),
+            "variance_power": variance_power_test(X_, residuals=self.residuals, predictor_index=park_index, alpha=alpha),
             "box_cox": self.box_cox_suggestion(),
-            "harvey_collier": self.harvey_collier_test(alpha=alpha),
-            "white_nonlinearity": self.white_nonlinearity_test(alpha=alpha)
+            "harvey_collier": harvey_collier_test(
+                    self.fitted_values,
+                    self.residuals,
+                    alpha=alpha
+                ),
+
+            "white_nonlinearity": white_nonlinearity_test(
+                    self.X_design_,
+                    self.fitted_values,
+                    self.residuals,
+                    alpha=alpha
+                )
         }
 
-    def goldfeld_quandt_test(self, sort_by: int = 1, drop_fraction: float = 0.2, alpha: float = 0.05) -> dict[str, Union[float, np.float64, np.ndarray, str]]:
+    def normality_summary(self, alpha: float = 0.05) -> dict[str, dict[str, float | str]]:
         """
-        Goldfeld–Quandt test for heteroscedasticity.
-
-        Parameters
-        ----------
-        sort_by : int
-            Index of predictor to sort observations (default: 1st column).
-        drop_fraction : float
-            Fraction of middle observations to drop when splitting data.
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with F statistic, p-value (approximate), and interpretation.
-        """
-        import math
-
-        if self.X_design_ is None or self.residuals is None:
-            raise ValueError(
-                "Model must be fit before running Goldfeld–Quandt test.")
-
-        X = self.X_design_[:, 1:]  # remove intercept
-        y = self.fitted_values + self.residuals
-        n = len(y)
-
-        sorted_idx = np.argsort(X[:, sort_by])
-        X_sorted = X[sorted_idx]
-        y_sorted = y[sorted_idx]
-
-        drop = int(drop_fraction * n)
-        split = (n - drop) // 2
-
-        X1, y1 = X_sorted[:split], y_sorted[:split]
-        X2, y2 = X_sorted[-split:], y_sorted[-split:]
-
-        def rss(X_part, y_part):
-            Xb = np.hstack([np.ones((len(X_part), 1)), X_part])
-            beta = np.linalg.lstsq(Xb, y_part, rcond=None)[0]
-            residuals = y_part - Xb @ beta
-            return np.sum(residuals**2)
-
-        rss1 = rss(X1, y1)
-        rss2 = rss(X2, y2)
-
-        f_stat = max(rss1, rss2) / min(rss1, rss2)
-        df1 = df2 = split - X.shape[1] - 1
-        p = 1 - stats.f.cdf(f_stat, df1,
-                            df2) if df1 > 0 and df2 > 0 else float("nan")
-
-        interpretation = "Evidence of heteroscedasticity" if p < alpha else "No evidence of heteroscedasticity"
-
-        return {
-            "F statistic": f_stat,
-            "df1": df1,
-            "df2": df2,
-            "p-value": p,
-            "interpretation": interpretation
-        }
-
-    def breusch_pagan_test(self, alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        Perform Breusch–Pagan test for heteroscedasticity.
+        Summarize residual normality using multiple tests (Shapiro–Wilk, D'Agostino K², and heuristic).
 
         Parameters
         ----------
         alpha : float
-            Significance level (default 0.05).
+            Significance level for interpretations.
 
         Returns
         -------
-        dict with 'LM', 'df', 'p-value', and 'interpretation'.
+        dict
+            Dictionary with results from Shapiro–Wilk, D'Agostino K², and normality heuristic.
         """
         if self.residuals is None:
-            raise ValueError(
-                "Model must be fit before calling breusch_pagan_test.")
+            raise ValueError("Model must be fit before checking normality.")
 
-        n, k = self.X_design_.shape
-        u2 = self.residuals**2
+        return {
+            "shapiro_wilk": shapiro_wilk_test(self.residuals, alpha=alpha),
+            "dagostino_k2": dagostino_k2(self.residuals.tolist(), alpha=alpha),
+            "heuristic": normality_heuristic(self.residuals.tolist(), alpha=alpha)
+        }
 
-        beta_aux = np.linalg.lstsq(self.X_design_, u2, rcond=None)[0]
-        y_hat = self.X_design_ @ beta_aux
-        ssr = np.sum((y_hat - u2.mean())**2)
+    def print_normality_summary(self, alpha: float = 0.05) -> None:
+        """
+        Print formatted normality test results.
 
-        lm = 0.5 * n * ssr / np.var(u2, ddof=1)
-        df = k - 1
-        p_value = 1 - stats.chi2.cdf(lm, df)
+        Parameters
+        ----------
+        alpha : float
+            Significance level for interpretation.
+        """
+        results = self.normality_summary(alpha=alpha)
 
-        interpretation = (
-            "Evidence of heteroscedasticity (non-constant variance)"
-            if p_value < alpha
-            else "No evidence of heteroscedasticity"
+        print("\nNormality Summary")
+        print("=" * 20)
+        for test, values in results.items():
+            title = test.replace("_", " ").title()
+            print(f"\n{title}")
+            print("-" * len(title))
+            for key, value in values.items():
+                label = key.replace('_', ' ').capitalize()
+                if isinstance(value, float):
+                    print(f"{label:<20}: {value:.4f}")
+                else:
+                    print(f"{label:<20}: {value}")
+
+    def normality_summary_to_latex(self, alpha: float = 0.05) -> str:
+        """
+        Export normality test results to a LaTeX tabular format.
+
+        Parameters
+        ----------
+        alpha : float
+            Significance level for interpretation.
+
+        Returns
+        -------
+        str
+            LaTeX tabular string.
+        """
+        results = self.normality_summary(alpha=alpha)
+
+        def format_row(test: str, metric: str, value: float | str) -> str:
+            if isinstance(value, float):
+                return f"{test} & {metric} & {value:.4f} \\\\"
+            return f"{test} & {metric} & {value} \\\\"
+
+        rows = []
+        for test, metrics in results.items():
+            test_name = test.replace("_", " ").title()
+            for key, val in metrics.items():
+                metric = key.replace("_", " ").capitalize()
+                rows.append(format_row(test_name, metric, val))
+
+        body = "\n".join(rows)
+        table = (
+            "\\begin{tabular}{lll}\n"
+            "\\toprule\n"
+            "Test & Metric & Value \\\\\n"
+            "\\midrule\n"
+            f"{body}\n"
+            "\\bottomrule\n"
+            "\\end{tabular}"
         )
+        return table
 
-        return {"LM": lm, "df": df, "p-value": p_value, "interpretation": interpretation}
-
-    def park_test(self, predictor_index: int = 0, alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        Park test for heteroscedasticity.
-
-        Parameters
-        ----------
-        predictor_index : int
-            Index of the predictor to test.
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with slope, t-statistic, and interpretation.
-        """
-        import math
-
-        if self.X_design_ is None or self.residuals is None:
-            raise ValueError("Model must be fit before Park test.")
-
-        u2 = self.residuals ** 2
-        log_u2 = np.log(u2 + 1e-8)  # prevent log(0)
-        x = self.X_design_[:, predictor_index + 1]  # +1 due to intercept
-
-        x_mean = np.mean(x)
-        log_u2_mean = np.mean(log_u2)
-
-        cov = np.sum((x - x_mean) * (log_u2 - log_u2_mean))
-        var_x = np.sum((x - x_mean) ** 2)
-
-        slope = cov / var_x
-        intercept = log_u2_mean - slope * x_mean
-
-        residuals = log_u2 - (intercept + slope * x)
-        sse = np.sum(residuals**2)
-        se_slope = np.sqrt(sse / (len(x) - 2) / var_x)
-
-        t_stat = slope / se_slope
-        p = 2 * (1 - stats.t.cdf(abs(t_stat), df=len(x) - 2))
-
-        interpretation = "Evidence of heteroscedasticity" if p < alpha else "No evidence of heteroscedasticity"
-
-        return {
-            "slope": float(slope),
-            "t statistic": float(t_stat),
-            "p-value": float(p),
-            "interpretation": str(interpretation)
-        }
-
-    def glejser_test(self, predictor_index: int = 0, transform: str = "sqrt", alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        Glejser test for heteroscedasticity.
-
-        Parameters
-        ----------
-        predictor_index : int
-            Index of the predictor to test.
-        transform : str
-            Transformation: 'raw', 'sqrt', or 'inverse'.
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with slope, t-statistic, and interpretation.
-        """
-        import math
-
-        if self.X_design_ is None or self.residuals is None:
-            raise ValueError("Model must be fit before Glejser test.")
-
-        y = np.abs(self.residuals)
-        x = self.X_design_[:, predictor_index + 1]
-
-        if transform == "raw":
-            x_t = x
-        elif transform == "sqrt":
-            x_t = np.sqrt(np.abs(x))
-        elif transform == "inverse":
-            x_t = 1 / (np.abs(x) + 1e-8)
-        else:
-            raise ValueError(
-                "Unknown transform: choose 'raw', 'sqrt', or 'inverse'.")
-
-        x_mean = np.mean(x_t)
-        y_mean = np.mean(y)
-
-        cov = np.sum((x_t - x_mean) * (y - y_mean))
-        var_x = np.sum((x_t - x_mean) ** 2)
-
-        slope = cov / var_x
-        intercept = y_mean - slope * x_mean
-
-        residuals = y - (intercept + slope * x_t)
-        sse = np.sum(residuals ** 2)
-        se_slope = np.sqrt(sse / (len(x_t) - 2) / var_x)
-
-        t_stat = slope / se_slope
-        p = 2 * (1 - stats.t.cdf(abs(t_stat), df=len(x_t) - 2))
-
-        interpretation = "Evidence of heteroscedasticity" if p < alpha else "No evidence of heteroscedasticity"
-
-        return {
-            "slope": slope,
-            "t statistic": t_stat,
-            "p-value": p,
-            "transformation": transform,
-            "interpretation": interpretation
-        }
-    
     def print_diagnostics(self, alpha: float = 0.05) -> None:
         """
         Print formatted diagnostics for heteroscedasticity and normality.
@@ -499,8 +400,7 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         print_section("Goldfeld–Quandt Test", diag["goldfeld_quandt"])
         print_section("Park Test", diag["park"])
         print_section("Glejser Test", diag["glejser"])
-        
-        
+
     def diagnostics_to_latex(self, alpha: float = 0.05) -> str:
         """
         Export diagnostics summary as a LaTeX tabular environment.
@@ -541,56 +441,6 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         )
 
         return table
-    
-    def reset_test(self, max_power: int = 3, alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        RESET test for functional form misspecification.
-
-        Parameters
-        ----------
-        max_power : int
-            Highest power of fitted values to include (e.g., 2 means include ŷ²).
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with F statistic, df, p-value, and interpretation.
-        """
-        if self.fitted_values is None or self.X_design_ is None or self.residuals is None:
-            raise ValueError("Model must be fit before running RESET test.")
-
-        n = len(self.fitted_values)
-        base_X = self.X_design_
-        powers = [self.fitted_values ** p for p in range(2, max_power + 1)]
-        augmented_X = np.column_stack([base_X] + powers)
-
-        beta_aug = np.linalg.lstsq(augmented_X, self.fitted_values + self.residuals, rcond=None)[0]
-        y_aug_hat = augmented_X @ beta_aug
-        residuals_aug = self.fitted_values + self.residuals - y_aug_hat
-
-        rss_base = np.sum(self.residuals ** 2)
-        rss_aug = np.sum(residuals_aug ** 2)
-
-        df1 = max_power - 1
-        df2 = n - augmented_X.shape[1]
-        f_stat = ((rss_base - rss_aug) / df1) / (rss_aug / df2)
-        p = 1 - stats.f.cdf(f_stat, df1, df2)
-
-        interpretation = (
-            "Possible functional form misspecification"
-            if p < alpha
-            else "No strong evidence of misspecification"
-        )
-
-        return {
-            "F statistic": f_stat,
-            "df1": df1,
-            "df2": df2,
-            "p-value": p,
-            "interpretation": interpretation
-        }
-
 
     def variance_power_test(self, predictor_index: int = 0, alpha: float = 0.05) -> dict[str, float | str]:
         """
@@ -620,7 +470,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         x_mean = np.mean(log_x)
         y_mean = np.mean(log_u2)
 
-        slope = np.sum((log_x - x_mean) * (log_u2 - y_mean)) / np.sum((log_x - x_mean)**2)
+        slope = np.sum((log_x - x_mean) * (log_u2 - y_mean)) / \
+            np.sum((log_x - x_mean)**2)
         intercept = y_mean - slope * x_mean
 
         y_pred = intercept + slope * log_x
@@ -643,7 +494,7 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
             "p-value": p,
             "interpretation": interpretation
         }
-        
+
     def box_cox_suggestion(self, lambdas: list[float] = [-1, -0.5, 0, 0.5, 1]) -> dict[str, float | str]:
         """
         Approximate Box–Cox transformation recommendation by minimizing residual variance.
@@ -685,100 +536,6 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
             "RSS": best_rss,
             "interpretation": interpretation
         }
-        
-    def harvey_collier_test(self, alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        Harvey–Collier test for linear functional form misspecification.
-
-        Parameters
-        ----------
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with t statistic, p-value, and interpretation.
-        """
-        if self.fitted_values is None or self.residuals is None:
-            raise ValueError("Model must be fit before Harvey–Collier test.")
-
-        y = self.fitted_values + self.residuals
-        y_hat = self.fitted_values
-
-        Z = np.column_stack([np.ones(len(y_hat)), y_hat])
-        beta = np.linalg.lstsq(Z, y, rcond=None)[0]
-        y_pred = Z @ beta
-        residuals = y - y_pred
-
-        sse = np.sum(residuals ** 2)
-        mse = sse / (len(y) - 2)
-        var_beta = mse * np.linalg.inv(Z.T @ Z)
-        t_stat = beta[1] / np.sqrt(var_beta[1, 1])
-
-        p_value = 2 * (1 - stats.t.cdf(np.abs(t_stat), df=len(y) - 2))
-
-        interpretation = (
-            "Possible linear functional form misspecification"
-            if p_value < alpha
-            else "No evidence of linear form misfit"
-        )
-
-        return {
-            "t statistic": t_stat,
-            "p-value": p_value,
-            "interpretation": interpretation
-        }
-        
-    def white_nonlinearity_test(self, alpha: float = 0.05) -> dict[str, float | str]:
-        """
-        White’s expansion test for nonlinear functional form misspecification.
-
-        Parameters
-        ----------
-        alpha : float
-            Significance level.
-
-        Returns
-        -------
-        dict with F statistic, df, p-value, and interpretation.
-        """
-        if self.X_design_ is None or self.fitted_values is None or self.residuals is None:
-            raise ValueError("Model must be fit before test.")
-
-        X = self.X_design_[:, 1:]  # exclude intercept
-        y = self.fitted_values + self.residuals
-        n, k = X.shape
-
-        nonlinear_terms = []
-        for i in range(k):
-            nonlinear_terms.append(X[:, i] ** 2)
-            for j in range(i + 1, k):
-                nonlinear_terms.append(X[:, i] * X[:, j])
-
-        X_aug = np.column_stack([self.X_design_] + nonlinear_terms)
-        df1 = X_aug.shape[1] - self.X_design_.shape[1]
-        df2 = n - X_aug.shape[1]
-
-        beta_full = np.linalg.lstsq(X_aug, y, rcond=None)[0]
-        rss_full = np.sum((y - X_aug @ beta_full) ** 2)
-        rss_base = np.sum(self.residuals ** 2)
-
-        f_stat = ((rss_base - rss_full) / df1) / (rss_full / df2)
-        p_value = 1 - stats.f.cdf(f_stat, df1, df2)
-
-        interpretation = (
-            "Model may be missing nonlinear structure"
-            if p_value < alpha
-            else "No evidence of nonlinear functional form"
-        )
-
-        return {
-            "F statistic": f_stat,
-            "df1": df1,
-            "df2": df2,
-            "p-value": p_value,
-            "interpretation": interpretation
-        }
 
     def recommend_transformations(self, alpha: float = 0.05) -> dict[str, list[str]]:
         """
@@ -794,7 +551,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         dict with recommendations for 'response' and 'predictors'.
         """
         if self.residuals is None or self.X_design_ is None:
-            raise ValueError("Model must be fit before making transformation suggestions.")
+            raise ValueError(
+                "Model must be fit before making transformation suggestions.")
 
         diag = self.diagnostics(alpha=alpha)
         response_recommendations = []
@@ -816,17 +574,21 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
 
         # RESET / Harvey–Collier / White-nonlinearity → suggest polynomials or interactions
         if diag["reset"]["p-value"] < alpha or diag["harvey_collier"]["p-value"] < alpha:
-            predictor_recommendations.append("Include polynomial terms (e.g., x², x³)")
+            predictor_recommendations.append(
+                "Include polynomial terms (e.g., x², x³)")
 
         if diag["white_nonlinearity"]["p-value"] < alpha:
-            predictor_recommendations.append("Include interaction terms (e.g., x₁ * x₂)")
+            predictor_recommendations.append(
+                "Include interaction terms (e.g., x₁ * x₂)")
 
         # Park / Glejser / Variance power
         if diag["park"]["p-value"] < alpha:
-            predictor_recommendations.append("Apply log(x) or sqrt(x) to stabilize variance")
+            predictor_recommendations.append(
+                "Apply log(x) or sqrt(x) to stabilize variance")
 
         if diag["glejser"]["p-value"] < alpha:
-            predictor_recommendations.append(f"Try transformation: {diag['glejser']['transformation']}(x)")
+            predictor_recommendations.append(
+                f"Try transformation: {diag['glejser']['transformation']}(x)")
 
         if diag["variance_power"]["p-value"] < alpha:
             gamma = diag["variance_power"]["gamma (slope)"]
@@ -835,7 +597,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
             elif gamma < 0.5:
                 predictor_recommendations.append("Apply log(x) or sqrt(x)")
             elif gamma > 1.5:
-                predictor_recommendations.append("Consider x² or polynomial variance modeling")
+                predictor_recommendations.append(
+                    "Consider x² or polynomial variance modeling")
 
         return {
             "response": list(set(response_recommendations)),
@@ -874,7 +637,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
                 transforms["description"].append("log(y)")
             else:
                 y_t = (y ** lmb - 1) / lmb
-                transforms["description"].append(f"Box–Cox transform on y (λ={lmb:.2f})")
+                transforms["description"].append(
+                    f"Box–Cox transform on y (λ={lmb:.2f})")
             transforms["y_trans"] = y_t
 
         # Start with original predictors
@@ -895,7 +659,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
                 for j in range(i + 1, p):
                     X_parts.append(X[:, i] * X[:, j])
                     desc.append(f"x{i+1}*x{j+1}")
-            transforms["description"].append("Added interaction terms (x_i * x_j)")
+            transforms["description"].append(
+                "Added interaction terms (x_i * x_j)")
 
         # Log, sqrt, inverse transforms on predictors
         if diag["park"]["p-value"] < alpha or diag["glejser"]["p-value"] < alpha:
@@ -907,7 +672,8 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
                 desc.append(f"sqrt(x{i+1})")
                 X_parts.append(1 / (np.abs(xi) + 1e-8))
                 desc.append(f"1/x{i+1}")
-            transforms["description"].append("Log, sqrt, and inverse transforms of predictors")
+            transforms["description"].append(
+                "Log, sqrt, and inverse transforms of predictors")
 
         # Final design matrix
         X_new = np.column_stack(X_parts)
@@ -915,7 +681,7 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         transforms["features"] = desc
 
         return transforms
-    
+
     def transformation_recommendations_to_latex(self, alpha: float = 0.05) -> str:
         """
         Generate LaTeX table with recommended transformations.
@@ -949,7 +715,7 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         )
 
         return table
-    
+
     def fit_transformed(self, alpha: float = 0.05) -> "LinearModel":
         """
         Automatically transform response and predictors based on diagnostics and fit a new model.
@@ -988,11 +754,6 @@ class LinearModel(BaseLinearModel, LinearInferenceMixin):
         model._transformed_features = suggestion["features"]
 
         return model
-
-
-
-
-
 
     def fit_wls(self, X: np.ndarray, y: np.ndarray, weights: np.ndarray) -> None:
         model = WeightedLinearModel(weights=weights)
@@ -1089,93 +850,3 @@ if __name__ == "__main__":
     for name, i in zip(["Model", "Residuals"], range(2)):
         print(f"{name:<12} {anova['df'][i]:>5} {anova['SS'][i]:>12.4f} "
               f"{anova['MS'][i]:>12.4f} {anova['F'][i]:>8.2f} {anova['p'][i]:>10.4g}")
-
-
-# addapt to the class laetr on
-# TODO:
-
-def normality_heuristic(x: list[float], alpha: float = 0.05) -> dict[str, float | str]:
-    """
-    Approximate normality test using skewness and kurtosis (base Python only).
-
-    Parameters
-    ----------
-    x : list[float]
-        Sample data.
-    alpha : float
-        Significance threshold.
-
-    Returns
-    -------
-    dict with skewness, kurtosis, and interpretation.
-    """
-    n = len(x)
-    mean = sum(x) / n
-    var = sum((xi - mean) ** 2 for xi in x) / n
-    std = var ** 0.5
-
-    skewness = sum((xi - mean) ** 3 for xi in x) / (n * std**3)
-    kurtosis = sum((xi - mean) ** 4 for xi in x) / \
-        (n * std**4) - 3  # excess kurtosis
-
-    interpretation = (
-        "Possible non-normality (|skew| > 1 or kurtosis > 1)"
-        if abs(skewness) > 1 or abs(kurtosis) > 1
-        else "Residuals appear approximately normal"
-    )
-
-    return {
-        "skewness": skewness,
-        "excess kurtosis": kurtosis,
-        "interpretation": interpretation
-    }
-
-
-def dagostino_k2(x: list[float], alpha: float = 0.05) -> dict[str, float | str]:
-    n = len(x)
-    if n < 8:
-        raise ValueError(
-            "D'Agostino's K² test requires at least 8 observations.")
-
-    mean = sum(x) / n
-    m2 = sum((xi - mean) ** 2 for xi in x) / n
-    m3 = sum((xi - mean) ** 3 for xi in x) / n
-    m4 = sum((xi - mean) ** 4 for xi in x) / n
-
-    skew = m3 / (m2 ** 1.5)
-    kurt = m4 / (m2 ** 2) - 3
-
-    Y = skew * math.sqrt((n + 1) * (n + 3) / (6.0 * (n - 2)))
-    beta2 = 3.0 * (n ** 2 + 27 * n - 70) * (n + 1) * (n + 3) / \
-        ((n - 2) * (n + 5) * (n + 7) * (n + 9))
-    W2 = -1 + math.sqrt(2 * (beta2 - 1))
-    delta = 1 / math.sqrt(math.log(math.sqrt(W2)))
-    alpha_skew = math.sqrt(2 / (W2 - 1))
-    Z1 = delta * math.log(Y / alpha_skew +
-                          math.sqrt((Y / alpha_skew) ** 2 + 1))
-
-    E = 3.0 * (n - 1) / (n + 1)
-    Var = 24.0 * n * (n - 2) * (n - 3) / ((n + 1) ** 2 * (n + 3) * (n + 5))
-    X = (kurt - E) / math.sqrt(Var)
-    B = 6.0 * (n ** 2 - 5 * n + 2) / ((n + 7) * (n + 9)) * \
-        math.sqrt(6.0 * (n + 3) * (n + 5) / (n * (n - 2) * (n - 3)))
-    A = 6.0 + 8.0 / B * (2.0 / B + math.sqrt(1 + 4.0 / (B ** 2)))
-    Z2 = ((1 - 2 / (9 * A)) - ((1 - 2 / A) / (1 + X * math.sqrt(2 / (A - 4))))
-          ** (1 / 3)) / math.sqrt(2 / (9 * A))
-
-    K2 = Z1 ** 2 + Z2 ** 2
-    p = math.exp(-0.5 * K2)  # approx for chi2.sf(K2, df=2)
-
-    interpretation = (
-        "Residuals are not normally distributed"
-        if p < alpha
-        else "Residuals appear normally distributed"
-    )
-
-    return {
-        "K² statistic": K2,
-        "p-value (approx)": p,
-        "interpretation": interpretation,
-        "skewness": skew,
-        "kurtosis": kurt
-    }
