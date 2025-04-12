@@ -6,6 +6,7 @@ def inference_summary(
     coefficients: np.ndarray,
     std_errors: np.ndarray,
     alpha: float = 0.05,
+    df_resid: Union[int, None] = None
 ) -> Dict[str, np.ndarray]:
     """
     Compute inference statistics for model coefficients: t-values, p-values, and confidence intervals.
