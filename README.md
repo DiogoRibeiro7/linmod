@@ -31,7 +31,17 @@ It supports:
 
 ```text
 linmod/
-├── core.py                   # LinearModel (main coordinator class)
+├── core.py               # LinearModel (coordenador principal)
+├── base.py               # LinearModel (coordenador principal)
+├── stats/                # Estratégias de modelagem
+│   ├── wls.py            # WeightedLinearModel
+│   ├── gls.py            # GeneralizedLinearModel
+│   
+├── glm/                   # Generalized Linear Models (new)
+│   ├── base.py            # BaseGLM: shared IRLS logic, deviance, etc.
+│   ├── logistic.py        # LogisticRegression (Binomial family)
+│   ├── poisson.py         # PoissonRegression
+│   └── links.py           # Link functions: identity, logit, log, etc.
 │
 ├── model/                    # Modeling strategies (OLS, WLS, GLS)
 │   ├── ols.py                # Ordinary Least Squares implementation
