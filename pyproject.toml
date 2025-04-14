@@ -46,7 +46,7 @@ jupyterlab = "^3.6"
 pytest = "^7.2"
 coverage = "*"
 pytest-cov = "*"
-black = "^22.10.0"
+black = "^24.3.0"
 mypy = "^1.0"
 
 [build-system]
