@@ -31,24 +31,25 @@ def compute_dfbetas(X: np.ndarray, residuals: np.ndarray, mse: float) -> np.ndar
         dfbetas.append(influence)
     return np.array(dfbetas)
 
-# Example with mock data
-np.random.seed(42)
-n = 100
-X = np.random.randn(n, 3)
-X_design = np.column_stack([np.ones(n), X])
-beta = np.array([1.0, 0.5, -0.3, 0.2])
-y = X_design @ beta + np.random.randn(n)
-residuals = y - X_design @ beta
-mse = np.mean(residuals ** 2)
+if __name__ == "__main__":
+    # Example with mock data
+    np.random.seed(42)
+    n = 100
+    X = np.random.randn(n, 3)
+    X_design = np.column_stack([np.ones(n), X])
+    beta = np.array([1.0, 0.5, -0.3, 0.2])
+    y = X_design @ beta + np.random.randn(n)
+    residuals = y - X_design @ beta
+    mse = np.mean(residuals ** 2)
 
-leverage = compute_leverage(X_design)
-cooks_d = compute_cooks_distance(X_design, residuals, mse)
-dffits = compute_dffits(X_design, residuals, mse)
-dfbetas = compute_dfbetas(X_design, residuals, mse)
+    leverage = compute_leverage(X_design)
+    cooks_d = compute_cooks_distance(X_design, residuals, mse)
+    dffits = compute_dffits(X_design, residuals, mse)
+    dfbetas = compute_dfbetas(X_design, residuals, mse)
 
-influence_df = pd.DataFrame({
-    "Leverage": leverage,
-    "Cook's Distance": cooks_d,
-    "DFFITS": dffits
-})
-display_dataframe_to_user("Influence Diagnostics Summary", influence_df.round(4))
+    influence_df = pd.DataFrame({
+        "Leverage": leverage,
+        "Cook's Distance": cooks_d,
+        "DFFITS": dffits
+    })
+    display_dataframe_to_user("Influence Diagnostics Summary", influence_df.round(4))
