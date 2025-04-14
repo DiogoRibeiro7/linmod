@@ -41,7 +41,7 @@ matplotlib = "^3.6"
 seaborn = "^0.12"
 streamlit = "^1.44.1"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 jupyterlab = "^3.6"
 pytest = "^7.2"
 coverage = "*"
