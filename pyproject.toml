@@ -33,13 +33,13 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.9.7 || >3.9.7,<4.0"
 numpy = "^1.23"
 scipy = "^1.9"
 pandas = "^1.5"
 matplotlib = "^3.6"
 seaborn = "^0.12"
-streamlit = "^1.25"
+streamlit = "^1.44.1"
 
 [tool.poetry.dev-dependencies]
 jupyterlab = "^3.6"
