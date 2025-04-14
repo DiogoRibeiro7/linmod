@@ -1,7 +1,4 @@
 name: Create issues from TODOs
-permissions:
-  contents: read
-  pull-requests: write
 
 
 on:
